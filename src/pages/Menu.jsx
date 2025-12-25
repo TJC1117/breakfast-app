@@ -1,13 +1,19 @@
 // src/pages/Menu.jsx
-import React from 'react';
+import React, { useState } from 'react'; // 引入 useState
 import useMenu from '../hooks/useMenu';
 import { formatCurrency } from '../utils/helpers';
 import { useUser } from '@clerk/clerk-react'; // 1. 匯入 useUser Hook
+import useCart from '../hooks/useCart'; // 1. 匯入 useCart
 
 const Menu = () => {
   // 一行程式碼，搞定資料獲取的所有複雜邏輯！
   const { menuItems, isLoading, error } = useMenu();
   const { isSignedIn } = useUser(); // 2. 取得登入狀態
+  const { addToCart } = useCart(); // 2. 取得 addToCart 函式！
+
+   // 新增兩個 state 來處理 UI 反饋
+  const [isAdding, setIsAdding] = useState(null); // 追蹤哪個商品正在被加入
+  const [feedback, setFeedback] = useState(null); // 顯示成功或失敗訊息
 
   // 處理載入中的情況
   if (isLoading) {
@@ -22,14 +28,37 @@ const Menu = () => {
   if (error) {
     return (
       <div className="alert alert-error shadow-lg">
-        <span>載入菜單資料時發生錯誤：{error}</span>
+        <span>載入菜單資料時發生錯誤：{error?.message ?? String(error)}</span>
       </div>
     );
   }
 
+  const handleAddToCart = async (item) => {
+     if (isAdding) return; // 防止重複點擊
+
+    setIsAdding(item.id);
+    setFeedback(null);
+    try {
+      await addToCart(item);
+      setFeedback({ type: 'success', message: `${item.name} 已加入購物車！` });
+    } catch (err) {
+      setFeedback({ type: 'error', message: err.message || '加入失敗，請稍後再試' });
+    } finally {
+      setIsAdding(null);
+      // 設定一個計時器，幾秒後自動隱藏提示訊息
+      setTimeout(() => setFeedback(null), 3000);
+    }
+  };
+
   // 成功獲取資料，渲染菜單列表
   return (
     <div className="space-y-12">
+       {/* 增加一個顯示提示訊息的區塊 */}
+      {feedback && (
+        <div className={`alert ${feedback.type === 'error' ? 'alert-error' : 'alert-success'}`}>
+          <span>{feedback.message}</span>
+        </div>
+      )}
       <section>
         <h1 className="text-3xl font-bold mb-6">美味菜單</h1>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
@@ -48,9 +77,16 @@ const Menu = () => {
                   {/* 3. 根據登入狀態決定按鈕的行為和外觀 */}
                 <button
                   className="btn btn-primary"
-                  disabled={!isSignedIn}
+                  disabled={!isSignedIn || isAdding === item.id}
+                  onClick={() => handleAddToCart(item)} // 3. 呼叫 handleAddToCart
                 >
-                  {isSignedIn ? "加入購物車" : "請先登入"}
+                  {isAdding === item.id ? (
+                    <span className="loading loading-spinner"></span>
+                      ) : isSignedIn ? (
+                        "加入購物車"
+                      ) : (
+                      "請先登入"
+                  )}
                 </button>
                 </div>
               </div>

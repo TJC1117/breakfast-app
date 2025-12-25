@@ -6,6 +6,8 @@ import { ClerkProvider } from '@clerk/clerk-react'; // 1. 匯入 ClerkProvider
 import LoginPage from './pages/Login.jsx';
 import RegisterPage from './pages/Register.jsx';  
 
+import { CartProvider } from './contexts/CartProvider'; // 1. 匯入 CartProvider
+
 // 引入我們的 CSS 和元件
 import './index.css';
 import App from './App.jsx';
@@ -16,6 +18,7 @@ import Cart from './pages/Cart.jsx';
 
 // 2. 獲取環境變數中的 Publishable Key
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+
 if (!clerkPublishableKey) {
   throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY. Please add it to your .env.local file.");
 }
@@ -60,7 +63,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
      {/* 3. 使用 ClerkProvider 包裹 RouterProvider */}
     <ClerkProvider publishableKey={clerkPublishableKey}>
-      <RouterProvider router={router} />
+      {/* 2. 用 CartProvider 包裹 RouterProvider */}
+      <CartProvider>
+         <RouterProvider router={router} />
+      </CartProvider>
     </ClerkProvider>
   </React.StrictMode>
 );
