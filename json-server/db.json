@@ -71,6 +71,33 @@
       "totalAmount": 50,
       "status": "pending",
       "createdAt": "2025-12-25T13:00:16.438Z"
+    },
+    {
+      "id": "7c10",
+      "userId": "user_37KmJTGKwNaVTFGOiNNn5KvPHxM",
+      "items": [
+        {
+          "menuItemId": "2",
+          "name": "健康早餐",
+          "price": 20,
+          "quantity": 1
+        },
+        {
+          "menuItemId": "6",
+          "name": "披薩系列",
+          "price": 22,
+          "quantity": 1
+        },
+        {
+          "menuItemId": "9",
+          "name": "拿鐵",
+          "price": 20,
+          "quantity": 1
+        }
+      ],
+      "totalAmount": 62,
+      "status": "pending",
+      "createdAt": "2025-12-26T10:21:08.202Z"
     }
   ]
 }

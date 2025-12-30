@@ -1,172 +1,298 @@
 // src/contexts/CartProvider.jsx
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useOptimistic } from 'react';
 import { useUser } from '@clerk/clerk-react';
 import CartContext from './cartContext';
 import * as api from '../services/api'; // 1. 引入我們的 API 服務
 
+// Optimistic reducer：描述 UI 要怎麼「先動起來」
+function optimisticReducer(state, action) {
+  const items = Array.isArray(state) ? [...state] : [];
+
+  switch (action.type) {
+    case 'ADD_OR_INC': {
+      const { userId, menuItem } = action.payload;
+      const menuItemId = menuItem.id ?? menuItem.menuItemId;
+
+      const idx = items.findIndex(
+        (it) => it.userId === userId && it.menuItemId === menuItemId
+      );
+
+      if (idx >= 0) {
+        items[idx] = {
+          ...items[idx],
+          quantity: Number(items[idx].quantity || 0) + 1,
+        };
+        return items;
+      }
+
+      return [
+        ...items,
+        {
+          ...menuItem,
+          id: `temp_${menuItemId}_${Date.now()}`,
+          userId,
+          menuItemId,
+          quantity: 1,
+          __optimistic: true,
+        },
+      ];
+    }
+
+    case 'SET_QTY': {
+      const { itemId, quantity } = action.payload;
+      const q = Math.max(0, Number(quantity || 0));
+
+      if (q === 0) {
+        return items.filter((it) => String(it.id) !== String(itemId));
+      }
+
+      return items.map((it) =>
+        String(it.id) === String(itemId)
+          ? { ...it, quantity: q }
+          : it
+      );
+    }
+
+    case 'REMOVE':
+      return items.filter((it) => String(it.id) !== String(action.payload.itemId));
+
+    case 'CLEAR':
+      return [];
+
+    default:
+      return items;
+  }
+}
+
+/* ===============================
+   CartProvider
+================================ */
 export function CartProvider({ children }) {
-  const [cartItems, setCartItems] = useState([]);
-  const [isLoading, setIsLoading] = useState(true); // 全域載入狀態
+  // 🔑 真實後端狀態
+  const [cartItemsServer, setCartItemsServer] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  
-  const { user, isLoaded: isUserLoaded } = useUser(); // 2. 取得 Clerk 的使用者物件
+
+  const { user, isLoaded } = useUser();
   const userId = user?.id;
 
+  // 🔥 Optimistic UI 狀態（UI 一律用這個）
+  const [cartItems, applyOptimistic] = useOptimistic(
+    cartItemsServer,
+    optimisticReducer
+  );
 
+  /* ===============================
+     讀取購物車
+  ================================ */
+  const refreshCart = useCallback(async () => {
+    if (!userId) return;
+    const items = await api.fetchCart(userId);
+    setCartItemsServer(Array.isArray(items) ? items : []);
+  }, [userId]);
 
-  // 3. 當使用者狀態載入完成或使用者 ID 改變時，從後端獲取購物車
   useEffect(() => {
-    if (!isUserLoaded) return; // 等待 Clerk 初始化完成
+    if (!isLoaded) return;
 
     if (!userId) {
-      // 如果使用者登出，清空購物車
-      setCartItems([]);
+      setCartItemsServer([]);
       setIsLoading(false);
       return;
     }
 
-    const loadCart = async () => {
+    (async () => {
       setIsLoading(true);
       try {
-        const items = await api.fetchCart(userId);
-        setCartItems(items);
+        await refreshCart();
       } catch (err) {
         setError(err.message);
       } finally {
         setIsLoading(false);
       }
-    };
+    })();
+  }, [userId, isLoaded, refreshCart]);
 
-    loadCart();
-  }, [userId, isUserLoaded]);
+  /* ===============================
+     加入購物車（Optimistic）
+  ================================ */
+  const addToCart = useCallback(
+    async (menuItem) => {
+      if (!userId) throw new Error('請先登入');
 
-  // 重新獲取購物車的輔助函式
-  const refreshCart = useCallback(async () => {
-    if (!userId) return;
-    try {
-      const items = await api.fetchCart(userId);
-      setCartItems(items);
-    } catch (err) {
-      console.error("刷新購物車失敗:", err);
-    }
-  }, [userId]);
+      setError(null);
 
-  // 4. 改造 addToCart 為 async 函式
-  const addToCart = useCallback(async (menuItem) => {
-    if (!userId) throw new Error("請先登入");
+      // UI 先更新
+      applyOptimistic({
+        type: 'ADD_OR_INC',
+        payload: { userId, menuItem },
+      });
 
-    try {
-      const existingItem = await api.findCartItemByMenuId(menuItem.id, userId);
-      
-      if (existingItem) {
-        // 如果已存在，更新數量 (PATCH)
-        await api.updateCartItem(existingItem.id, {
-          quantity: existingItem.quantity + 1
-        });
-      } else {
-        // 如果不存在，新增一筆 (POST)
-        await api.addCartItem({
-          ...menuItem,
-          menuItemId: menuItem.id, // 確保有關聯 ID
-          id: undefined, // 讓 json-server 自動產生 id
-          userId: userId,
-          quantity: 1,
-        });
+      try {
+        const existing = await api.findCartItemByMenuId(menuItem.id, userId);
+
+        if (existing) {
+          await api.updateCartItem(existing.id, {
+            quantity: existing.quantity + 1,
+          });
+        } else {
+          await api.addCartItem({
+            ...menuItem,
+            menuItemId: menuItem.id,
+            userId,
+            quantity: 1,
+          });
+        }
+
+        await refreshCart();
+      } catch (err) {
+        setError(err.message);
+        await refreshCart(); // rollback
+        throw err;
       }
-      await refreshCart(); // 操作成功後，重新獲取整個購物車以同步狀態
-    } catch (err) {
-      setError(err.message);
-      throw err; // 將錯誤向上拋出，讓 UI 層可以捕捉到
-    }
-  }, [userId, refreshCart]);
-  
-  // 5. 改造 updateQuantity 和 removeFromCart
-  const updateQuantity = useCallback(async (itemId, newQuantity) => {
-    const quantity = Math.max(0, newQuantity);
-    if (quantity === 0) {
-      await removeFromCart(itemId);
-    } else {
-      await api.updateCartItem(itemId, { quantity });
-      await refreshCart();
-    }
-  }, [userId, refreshCart]);
+    },
+    [userId, applyOptimistic, refreshCart]
+  );
 
-  const removeFromCart = useCallback(async (itemId) => {
-    await api.removeCartItem(itemId);
-    await refreshCart();
-  }, [userId, refreshCart]);
+  /* ===============================
+     更新數量（Optimistic）
+  ================================ */
+  const updateQuantity = useCallback(
+    async (itemId, newQuantity) => {
+      const quantity = Math.max(0, Number(newQuantity || 0));
+      setError(null);
 
-// 新增：清空購物車函式
+      applyOptimistic({
+        type: 'SET_QTY',
+        payload: { itemId, quantity },
+      });
+
+      try {
+        if (quantity === 0) {
+          await api.removeCartItem(itemId);
+        } else {
+          await api.updateCartItem(itemId, { quantity });
+        }
+        await refreshCart();
+      } catch (err) {
+        setError(err.message);
+        await refreshCart();
+        throw err;
+      }
+    },
+    [applyOptimistic, refreshCart]
+  );
+
+  /* ===============================
+     移除商品（Optimistic）
+  ================================ */
+  const removeFromCart = useCallback(
+    async (itemId) => {
+      setError(null);
+
+      applyOptimistic({
+        type: 'REMOVE',
+        payload: { itemId },
+      });
+
+      try {
+        await api.removeCartItem(itemId);
+        await refreshCart();
+      } catch (err) {
+        setError(err.message);
+        await refreshCart();
+        throw err;
+      }
+    },
+    [applyOptimistic, refreshCart]
+  );
+
+  /* ===============================
+     清空購物車
+  ================================ */
   const clearCart = useCallback(async () => {
     if (!userId) return;
+
+    setError(null);
+    applyOptimistic({ type: 'CLEAR' });
+
     try {
-      // 獲取當前使用者的所有購物車項目
-      const userCartItems = await api.fetchCart(userId);
-      // 遍歷並刪除每一項
-      for (const item of userCartItems) {
-        await api.removeCartItem(item.id);
+      const items = await api.fetchCart(userId);
+      for (const it of items) {
+        await api.removeCartItem(it.id);
       }
-      await refreshCart(); // 重新整理前端狀態
+      await refreshCart();
     } catch (err) {
-      console.error("清空購物車失敗:", err);
       setError(err.message);
+      await refreshCart();
     }
-  }, [userId, refreshCart]);
+  }, [userId, applyOptimistic, refreshCart]);
 
+  /* ===============================
+     計算衍生資料（用 optimistic）
+  ================================ */
+  const cartCount = useMemo(
+    () => cartItems.reduce((sum, it) => sum + it.quantity, 0),
+    [cartItems]
+  );
 
-  const cartCount = useMemo(() => cartItems.reduce((sum, item) => sum + item.quantity, 0), [cartItems]);
-  const totalAmount = useMemo(() => cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0), [cartItems]);
-  
-  // 新增：結帳函式
+  const totalAmount = useMemo(
+    () => cartItems.reduce((sum, it) => sum + it.price * it.quantity, 0),
+    [cartItems]
+  );
+
+  /* ===============================
+     結帳
+  ================================ */
   const checkout = useCallback(async () => {
     if (!userId || cartItems.length === 0) {
-      throw new Error("購物車是空的或使用者未登入");
+      throw new Error('購物車是空的或使用者未登入');
     }
-    
-    // 1. 建立訂單 payload
-    const orderPayload = {
+
+    await api.createOrder({
       userId,
-      items: cartItems.map(item => ({
-        menuItemId: item.menuItemId,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
+      items: cartItems.map((it) => ({
+        menuItemId: it.menuItemId,
+        name: it.name,
+        price: it.price,
+        quantity: it.quantity,
       })),
       totalAmount,
-      status: 'pending', // 訂單狀態，例如 'pending', 'completed'
+      status: 'pending',
       createdAt: new Date().toISOString(),
-    };
-    
-    try {
-      // 2. 呼叫 API 建立訂單
-      await api.createOrder(orderPayload);
-      
-      // 3. 訂單建立成功後，清空購物車
-      await clearCart();
-      
-    } catch (err) {
-      console.error("結帳失敗:", err);
-      setError(err.message);
-      throw err; // 將錯誤拋出，讓 UI 層處理
-    }
-    
-  }, [userId, cartItems, totalAmount, clearCart]);  
+    });
 
+    await clearCart();
+  }, [userId, cartItems, totalAmount, clearCart]);
 
-  
-
-  const value = useMemo(() => ({
-    cartItems,
-    cartCount,
-    totalAmount,
-    isLoading,
-    error,
-    addToCart,
-    removeFromCart,
-    updateQuantity,
-    checkout, // 新增
-    clearCart, // 新增
-  }), [cartItems, cartCount, totalAmount, isLoading, error, addToCart, removeFromCart, updateQuantity, checkout, clearCart]);
+  /* ===============================
+     Context value
+  ================================ */
+  const value = useMemo(
+    () => ({
+      cartItems, // 🔥 UI 用 optimistic
+      cartCount,
+      totalAmount,
+      isLoading,
+      error,
+      addToCart,
+      updateQuantity,
+      removeFromCart,
+      clearCart,
+      checkout,
+    }),
+    [
+      cartItems,
+      cartCount,
+      totalAmount,
+      isLoading,
+      error,
+      addToCart,
+      updateQuantity,
+      removeFromCart,
+      clearCart,
+      checkout,
+    ]
+  );
 
   return (
     <CartContext.Provider value={value}>

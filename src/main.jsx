@@ -15,6 +15,8 @@ import Home from './pages/Home.jsx';
 import Menu from './pages/Menu.jsx';
 import About from './pages/About.jsx';
 import Cart from './pages/Cart.jsx';
+import Orders from './pages/Orders.jsx'; // 匯入 Orders 頁面
+
 
 // 2. 獲取環境變數中的 Publishable Key
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
@@ -53,6 +55,10 @@ const router = createBrowserRouter([
       {
         path: "register",
         element: <RegisterPage />,
+      },
+      {
+        path: "orders",
+        element: <Orders />,
       },
     ],
   },

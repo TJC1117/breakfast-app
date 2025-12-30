@@ -62,3 +62,32 @@ export async function createOrder(order) {
   });
   return handleResponse(response);
 }
+
+// 你若本來就有這個 helper，就用你的；沒有就直接用這個
+async function request(path, options = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+
+  // 有些 API 可能回傳空 body（204），避免 json() 爆炸
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) return null;
+
+  return res.json();
+}
+
+export async function fetchOrders(userId) {
+  if (!userId) throw new Error("fetchOrders: userId is required");
+
+  const qs = new URLSearchParams({ userId }).toString();
+  return request(`/orders?${qs}`, { method: "GET" });
+}

@@ -21,6 +21,7 @@ const Header = () => {
           <li><Link to="/">首頁</Link></li>
           <li><Link to="/menu">美味菜單</Link></li>
           <li><Link to="/about">關於我們</Link></li>
+          <li><Link to="/orders">我的訂單</Link></li>
         </ul>
       </div>
       <div className="navbar-end">
